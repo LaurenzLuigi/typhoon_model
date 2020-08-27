@@ -4,7 +4,7 @@
 Processing tools for generating wind field from best track data
 
 ### Dependencies
-numpy, pandas, scipy, netcdf4
+numpy, pandas, scipy, netcdf4, matplotlib(optional)
 
 ### Installation
 1. Install dependencies via pip
