@@ -11,7 +11,7 @@ Cd to folder with setup.py and run pip install .
 
 ## Usage
 #### Set-up
-'''
+'''python
 from matplotlib import animation
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,8 +33,10 @@ typ.make_grid((lat0, lon0),
 typhoon_lines = typ.Holland_Params()            #calculate parameters for calculationg of gradient 
                                                 #winds based on Holland 1981
 '''
+
 ####1D Profile
-'''
+
+'''python
 rs = np.arange(0.1, 300, 0.1)                                                
 typhoon_lines = typ.Holland_Profile(rs)
 
@@ -51,8 +53,10 @@ for index, typhoon in typhoon_lines.iterrows():
     
 plt.show()
 '''
+
 ####2D Field
-'''
+
+'''python
 grid, vector, radial, pressure = typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
                                                 
 #save field to netcdf file
