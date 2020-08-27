@@ -1,63 +1,81 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Aug 26 10:28:43 2020
-
-@author: Luigi
-"""
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 
-class JMAto2D():    
-    def __init__(self, jma_file, incode, inname=False, freq=False):
-        self.typhoon_lines = self.read_typhoon(jma_file, incode, freq=freq)    
+class wind_maker():
+    def __init__(self, txt_file, incode, inname=False, freq="6H", database="jma"):
+        '''
+        Initiate the wind_maker class to calculate wind profile or wind field
+        from different best-track data sets
+        Parameters
+        ----------
+        txt_file : file_path
+            Text file containing best track data downloadable from JMA
+            or JTWC website
+        incode : int
+            Typhoon code based on best track data.
+        inname : str, optional
+            Typhoon name. The default is False.
+        freq : offset alias, optional
+            Time-step of output files. Missing data will be linearly 
+            interpolated. The default is "6H".
+        database : TYPE, optional
+            Select between "jma" or "jtwc". The default is "jma".
+
+        Returns
+        -------
+        None.
+
+        '''
+        self.inname = inname
+        self.incode = incode
+        self.txt_file = txt_file 
+        self.freq = freq 
+        self.database = database   
         
-    def nc_save(self, fname = False):
-        import netCDF4
-        if fname is False:
-            fname = f"{self.incode} {self.inname}.nc"
-        lons, lats = self.grid.glat.shape
+        self.read_track()
         
-        long_out = self.grid.glon[:,0].tolist()
-        lat_out = self.grid.glat[0,:].tolist()
-        start = self.typhoon_lines.date.iloc[0]
-        time_out = [(i - start).days*24 + (i - start).seconds/3600 for i in self.typhoon_lines.date]
+    def read_track(self):
+        '''
+        Read tracks from file and extract typhoon based on self.incode
+        Parameters
+        ----------
+        None.
         
-        ncout = netCDF4.Dataset(fname, "w")
-        
-        ncout.createDimension("latitude", lats)
-        ncout.createDimension("longitude", lons)
-        ncout.createDimension("time", len(self.typhoon_lines))
-        
-        lats = ncout.createVariable("latitude","f",("latitude",))
-        lons = ncout.createVariable("longitude","f",("longitude",))
-        time = ncout.createVariable("time","f",("time",))
-        
-        U = ncout.createVariable("x_wind","f",("time","latitude","longitude"))
-        V = ncout.createVariable("y_wind","f",("time","latitude","longitude"))
-        pres = ncout.createVariable("air_pressure","f",("time","latitude","longitude"))
-        
-        lats[:] = lat_out
-        lons[:] = long_out
-        time[:] = time_out
-        U[:,:,:] = np.swapaxes(self.wind_x, 0, -1)
-        V[:,:,:] = np.swapaxes(self.wind_y, 0, -1)
-        pres[:,:,:] = np.swapaxes(self.wind_pres, 0, -1) * 100
-        
-        lats.unit = "degree"
-        lons.unit = "degree"
-        time.unit = f"hour since {start}"
-        U.unit = "ms-1"
-        V.unit = "ms-1"
-        pres.unit = "Pa"
-        
-        ncout.close()
-        
-    def read_typhoon(self, jma_file, incode, inname = False, freq=False):
-        txt_file = jma_file
-        
-        with open(txt_file) as f:
+        Returns
+        -------
+        typ : pd.DataFrame
+            Typhoon data frame with inserted interpolated data
+
+        '''
+        if self.database.lower() == "jma":
+            typ = self.jma_decoder()
+        else:
+            pass
+            
+        if self.freq is not False:
+            start = typ.date.iloc[0]
+            end = typ.date.iloc[-1]
+            new_range = pd.date_range(start, end, freq=self.freq)
+            new_range = pd.DataFrame({"date": new_range})
+            typ = new_range.merge(typ, on="date", how="left")
+            typ.interpolate("linear", axis=0, inplace=True)
+            
+        self.typhoon_lines = typ
+        return typ   
+      
+    def jma_decoder(self):
+        '''
+        Decode jma data_set to useable format
+
+        Returns
+        -------
+        typhoon : pd.DataFrane
+            Dataframe containing typhoon details.
+
+        '''
+        with open(self.txt_file) as f:
             lines = f.readlines()
         
         code_name = {}
@@ -71,27 +89,54 @@ class JMAto2D():
             else:
                 typhoon_dict.setdefault(key, []).append(line[:-1])
         
-        if inname is False:
-            inname = code_name[str(incode)]
+        if self.inname is False:
+            self.inname = code_name[str(self.incode)]
         
-        print(f"Extracting Data for Typhoon {inname} with Code {incode}")
-        inkey = f"{incode} " + inname
+        print(f"Extracting Data for Typhoon {self.inname} with Code {self.incode}")
+        inkey = f"{self.incode} " + self.inname
         typ = typhoon_dict[inkey]
-        typ = self.decoder(typ)  
-        self.inname = inname
-        self.incode = incode
         
-        if freq is not True:
-            start = typ.date.iloc[0]
-            end = typ.date.iloc[-1]
-            new_range = pd.date_range(start, end, freq=freq)
-            new_range = pd.DataFrame({"date": new_range})
-            typ = new_range.merge(typ, on="date", how="left")
-            typ.interpolate("linear", axis=0, inplace=True)
-        return typ   
+        line = []
+        for entry in typ:
+            #date, lat, long, Pc, Vgmax, R50, dir50, R30
+            if int(entry[0:2]) > 50:
+                date = "19" + entry[0:8]
+            else:
+                date = "20" + entry[0:8]
+            lat = entry[15:18]
+            long = entry[19:23]
+            Pc = entry[24:28]
+            Vgmax = entry[33:36]
+            R50 = entry[42:46] if entry[42:46] != '    ' else 0
+            R30 = entry[53:57] if entry[53:57] != '    ' else 0
+            line.append([date, float(lat)/10, float(long)/10, float(Pc), 
+                         float(Vgmax)*0.51444444, float(R50), float(R30)
+                         ])
+        
+        typhoon = pd.DataFrame(line, columns = ["date", "lat", "long", "Pc", 
+                                                "Vgmax", "R50", "R30"])
+        typhoon["date"] = pd.to_datetime(typhoon.date, format="%Y%m%d%H")
+        return typhoon
     
     def Holland_Params(self):
-        "Calculate the wind-pressure for the set of radius given by the list"
+        '''
+        Optimize gradient wind formulation by Holland (1981) by adjusting 
+        shape parameter B to minize root mean square error in comparison to
+        known points based on best track data.
+        
+        In the absence of known points, shape parameter was estimated based on 
+        the relationship suggested by Vickery and Madhara (2003)
+        
+        Using the optimized gradient wind formulation, calculate the Radius of
+        Maximum Winds (RMW)
+
+        Returns
+        -------
+        self.typhoon_lines : pd.DataFrane
+            Typhoon Dataframe with additional columns containing optimized
+            parameters
+
+        '''
         rho_air = 1.225
         Bs = []
         Vgmaxs = []
@@ -132,6 +177,22 @@ class JMAto2D():
         return self.typhoon_lines
 
     def Holland_Profile(self, rs):
+        '''
+        Calculates the gradient wind speed based on the formulation by Holland
+        (1981), on the radiuses specified by the input list
+
+        Parameters
+        ----------
+        rs : list
+            List of radius where gradient wind should be calculated.
+
+        Returns
+        -------
+        self.typhoon_lines : pd.DataFrane
+            Typhoon Dataframe with additional column containing calculated
+            gradient winds
+
+        '''
         Vgs = []
         for index, typhoon in self.typhoon_lines.iterrows():
             Vg = []
@@ -143,6 +204,35 @@ class JMAto2D():
         return self.typhoon_lines
             
     def Holland_Field(self, geo_cor="Harper", FMA=False, WIA=False, **kwargs):
+        '''
+        Calculates 2D wind and pressure field based on the formulation by 
+        Holland (1981)
+
+        Parameters
+        ----------
+        geo_cor : str, optional
+            DESCRIPTION. The default is "Harper".
+        FMA : TYPE, optional
+            DESCRIPTION. The default is False.
+        WIA : TYPE, optional
+            DESCRIPTION. The default is False.
+        **kwargs : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+        TYPE
+            DESCRIPTION.
+        tuple
+            DESCRIPTION.
+        tuple
+            DESCRIPTION.
+        TYPE
+            DESCRIPTION.
+
+        '''
         self.Holland_Params()
         wind_x = np.array([])
         wind_y = np.array([])
@@ -202,6 +292,23 @@ class JMAto2D():
         return (self.grid.glat, self.grid.glon), (self.wind_x, self.wind_y), (self.wind_spd, self.wind_dire), self.wind_pres,
         
     def geo_Harper(self, ws):
+        '''
+        Apply geostrophic correction to input wind field based on the values
+        recommended by Harper et.al. (2001).
+
+        Parameters
+        ----------
+        ws : 2D numpy array
+            2D Wind Speed array.
+
+        Returns
+        -------
+        ws*coef : 2D numpy array
+            Corrected wind speed array.
+        coef : 2D numpy array
+            Correction coefficient.
+
+        '''
         coef = np.copy(ws)
         coef[ws > 45] = 0.66
         coef[ws < 45] = (0.77 - 4.31e-3 * (ws[ws < 45] - 19.5))
@@ -210,6 +317,31 @@ class JMAto2D():
         return ws*coef, coef
     
     def FMA_Harper(self, ws, wd, typhoon, theta_max, dfm, index):
+        '''
+        Corrects the wind field for Forward Motion Asymmetry based on the 
+        equation suggested by Harper et.al. (2001)
+
+        Parameters
+        ----------
+        ws : 2D numpy array
+            2D Wind Speed array.
+        wd : 2D numpy array
+            2D Wind Direction array.
+        typhoon : pd.DataFrame
+            typhoon description at current time-step.
+        theta_max : float
+            Assumed line of maximum winds.
+        dfm : float
+            Correction factor.
+        index : int
+            index.
+
+        Returns
+        -------
+        corr : 2D numpy array
+            Corrected 2D Wind Speed array.
+
+        '''
         new = self.typhoon_lines.iloc[index]
         old = self.typhoon_lines.iloc[index - 1]
         R = dist_calc((new.lat, new.long), (old.lat, old.long))
@@ -220,6 +352,27 @@ class JMAto2D():
         return corr    
     
     def WIA_Sobey(self, wd, RMW, R, north):
+        '''
+        Corrects wind direction by the inflow angle based on the formulation
+        by Sobey et al. (1977)
+
+        Parameters
+        ----------
+        wd : 2D numpy array
+            2D Wind Direction array.
+        RMW : float
+            Radius of Maximum Winds.
+        R : 2D numpy array
+            2D array showing distance of grid to typhoon eye.
+        north : Boolean
+            True if northern hemispher, False if southern.
+
+        Returns
+        -------
+        wd - coef : 2D numpy array
+            Corrected Wind Direction array.
+
+        '''
         coef = np.copy(wd)
         coef[R >= 1.2*RMW] = 25
         coef[R < 1.2 * RMW] = 10 + 75 * (R[R < 1.2 * RMW] / RMW - 1)
@@ -227,6 +380,60 @@ class JMAto2D():
         if north is True:
             return wd + coef
         return wd - coef
+    
+    def nc_save(self, fname = False):
+        '''
+        Save the important 2D field into netcdf
+
+        Parameters
+        ----------
+        fname : str, optional
+            Filename. The default is False.
+
+        Returns
+        -------
+        None.
+
+        '''
+        import netCDF4
+        if fname is False:
+            fname = f"{self.incode} {self.inname}.nc"
+        lons, lats = self.grid.glat.shape
+        
+        long_out = self.grid.glon[:,0].tolist()
+        lat_out = self.grid.glat[0,:].tolist()
+        start = self.typhoon_lines.date.iloc[0]
+        time_out = [(i - start).days*24 + (i - start).seconds/3600 for i in self.typhoon_lines.date]
+        
+        ncout = netCDF4.Dataset(fname, "w")
+        
+        ncout.createDimension("latitude", lats)
+        ncout.createDimension("longitude", lons)
+        ncout.createDimension("time", len(self.typhoon_lines))
+        
+        lats = ncout.createVariable("latitude","f",("latitude",))
+        lons = ncout.createVariable("longitude","f",("longitude",))
+        time = ncout.createVariable("time","f",("time",))
+        
+        U = ncout.createVariable("x_wind","f",("time","latitude","longitude"))
+        V = ncout.createVariable("y_wind","f",("time","latitude","longitude"))
+        pres = ncout.createVariable("air_pressure","f",("time","latitude","longitude"))
+        
+        lats[:] = lat_out
+        lons[:] = long_out
+        time[:] = time_out
+        U[:,:,:] = np.swapaxes(self.wind_x, 0, -1)
+        V[:,:,:] = np.swapaxes(self.wind_y, 0, -1)
+        pres[:,:,:] = np.swapaxes(self.wind_pres, 0, -1) * 100
+        
+        lats.unit = "degree"
+        lons.unit = "degree"
+        time.unit = f"hour since {start}"
+        U.unit = "ms-1"
+        V.unit = "ms-1"
+        pres.unit = "Pa"
+        
+        ncout.close()
     
     def error_calc(self, data, RMW, Vgmax, typhoon):
         error = 0
@@ -263,32 +470,7 @@ class JMAto2D():
     
     def pres_function(self, R, typhoon):
         return typhoon.Pc + typhoon.delp * (np.exp(-typhoon.RMW / R))**typhoon.B
-    
-    def decoder(self, typ):
-        line = []
-        for entry in typ:
-            #date, lat, long, Pc, Vgmax, R50, dir50, R30
-            if int(entry[0:2]) > 30:
-                date = "19" + entry[0:8]
-            else:
-                date = "20" + entry[0:8]
-            lat = entry[15:18]
-            long = entry[19:23]
-            Pc = entry[24:28]
-            Vgmax = entry[33:36]
-            R50 = entry[42:46] if entry[42:46] != '    ' else 0
-            dir50 = int(entry[41]) if entry[41] != ' ' else 0
-            dir50 = dir50/8 * 360 if dir50 != 9 else 0
-            R30 = entry[53:57] if entry[53:57] != '    ' else 0
-            dir30 = int(entry[52]) if entry[52] != ' ' else 0
-            dir30 = dir30/8 * 360 if dir30 != 9 else 0
-            line.append([date, float(lat)/10, float(long)/10, float(Pc), float(Vgmax)*0.51444444, 
-                          float(R50), int(dir50), float(R30), int(dir30)])
-        
-        typhoon = pd.DataFrame(line, columns = ["date", "lat", "long", "Pc", 
-                                                "Vgmax", "R50", "dir50", "R30", "dir30"])
-        typhoon["date"] = pd.to_datetime(typhoon.date, format="%Y%m%d%H")
-        return typhoon
+
     
     def make_grid(self, ldown, uright, delta):
         lat0, lon0 = ldown
@@ -335,34 +517,3 @@ def dist_calc(COORDS1, coords0):
     a = sin(dlat/2)**2 + cos(radians(lat0))*cos(radians(lat1)) * sin(dlon/2)**2
     c = 2 * arctan2(a**0.5, (1-a)**0.5)
     return R * c
-
-def embiggen(lat_rho, lon_rho):
-    """
-    enlarge the masking matrix by half a step in all direction to
-    match with pcolormesh requirements on plottingd
-    """
-    dlat = lat_rho[0, 1] - lat_rho[0, 0]
-    lat1 = lat_rho[:, 0] - dlat/2
-    lat2 = lat_rho[:, -1] + dlat/2
-    latmid = (lat_rho[:, 0:-1] + lat_rho[:, 1:])/2
-    latplot = np.c_[lat1, latmid, lat2]
-
-    dlat = latplot[1, 0] - latplot[0, 0]
-    lat1 = (latplot[0, :] - dlat/2)
-    lat2 = (latplot[-1, :] + dlat/2)
-    latmid = (latplot[0:-1, :] + latplot[1:, :])/2
-    latplot = np.r_[[lat1], latmid, [lat2]]
-
-    dlon = lon_rho[1, 0] - lon_rho[0, 0]
-    lon1 = (lon_rho[0, :] - dlon/2)
-    lon2 = (lon_rho[-1, :] + dlon/2)
-    lonmid = (lon_rho[0:-1, :] + lon_rho[1:, :])/2
-    lonplot = np.r_[[lon1], lonmid, [lon2]]
-
-    dlon = lonplot[0, 1] - lonplot[0, 0]
-    lon1 = lonplot[:, 0] - dlon/2
-    lon2 = lonplot[:, -1] + dlon/2
-    lonmid = (lonplot[:, 0:-1] + lonplot[:, 1:])/2
-    lonplot = np.c_[lon1, lonmid, lon2]
-
-    return latplot, lonplot

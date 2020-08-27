@@ -13,15 +13,14 @@ numpy, pandas, scipy, netcdf4, matplotlib(optional)
 ### Usage
 #### Set-up
 ```python
-from matplotlib import animation
-import matplotlib.pyplot as plt
 import numpy as np
 
-from typhoonify.wind_maker import JMAto2D
+from typhoonify.wind_maker import wind_maker
 
 incode = 1330                                   #typhoon code on best track data
 jma_file = "bst_all.txt"                        #best track data file
-typ = JMAto2D(jma_file, incode, freq="3H")      #initiate JMAto2D function
+typ = wind_maker(jma_file, incode,
+                 freq="3H", database="jma")     #initiate wind_maker function
                                                 #freq - offset aliases, in this case every 3hours
 
 lat0, lon0 = 8, 120                             #lower-left corner
@@ -39,6 +38,8 @@ typhoon_lines = typ.Holland_Params()            #calculate parameters for calcul
 #### Calculate 1D Profile and compare to known datapoints in JMA
 
 ```python
+import matplotlib.pyplot as plt
+
 rs = np.arange(0.1, 300, 0.1)                   #creates an array of r distances
 typhoon_lines = typ.Holland_Profile(rs)         #calculates gradient wind at r distances away
                                                 #add "Vg" column to dataframe containing gradient wind points
@@ -61,6 +62,8 @@ plt.show()
 #### Calculate wind and pressure fields and save to netcdf
 
 ```python
+from matplotlib import animation
+
 #Return 2D variables based on Holland Equation
 #grid - latitude and longitude field tuple
 #vector - x, y wind_component field tuple
