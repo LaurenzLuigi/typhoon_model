@@ -1,17 +1,17 @@
-# typhoonify
+# Typhoonify
 
-## Description
+### Description
 Processing tools for generating wind field from best track data
 
-## Dependencies
+### Dependencies
 numpy, pandas, scipy, netcdf4
 
-## Installation
+### Installation
 1. Install dependencies via pip
 2. CD to folder with setup.py and run `pip install .`
 
-## Usage
-### Set-up
+### Usage
+#### Set-up
 ```python
 from matplotlib import animation
 import matplotlib.pyplot as plt
@@ -35,7 +35,7 @@ typhoon_lines = typ.Holland_Params()            #calculate parameters for calcul
                                                 #winds based on Holland 1981
 ```
 
-### Calculate 1D Profile and compare to known datapoints in JMA
+#### Calculate 1D Profile and compare to known datapoints in JMA
 
 ```python
 rs = np.arange(0.1, 300, 0.1)                                                
@@ -55,7 +55,7 @@ for index, typhoon in typhoon_lines.iterrows():
 plt.show()
 ```
 
-### Calculate wind and pressure fields and save to netcdf
+#### Calculate wind and pressure fields and save to netcdf
 
 ```python
 grid, vector, radial, pressure = typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
