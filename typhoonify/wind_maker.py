@@ -47,7 +47,7 @@ class JMAto2D():
         
         lats.unit = "degree"
         lons.unit = "degree"
-        time.unit = "hour since {start}"
+        time.unit = f"hour since {start}"
         U.unit = "ms-1"
         V.unit = "ms-1"
         pres.unit = "Pa"
