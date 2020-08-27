@@ -10,8 +10,8 @@ numpy, pandas, scipy, netcdf4
 Cd to folder with setup.py and run pip install .
 
 ## Usage
-#### Set-up
-'''python
+### Set-up
+```python
 from matplotlib import animation
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,11 +32,11 @@ typ.make_grid((lat0, lon0),
 
 typhoon_lines = typ.Holland_Params()            #calculate parameters for calculationg of gradient 
                                                 #winds based on Holland 1981
-'''
+```
 
 ####1D Profile
 
-'''python
+```python
 rs = np.arange(0.1, 300, 0.1)                                                
 typhoon_lines = typ.Holland_Profile(rs)
 
@@ -52,11 +52,11 @@ for index, typhoon in typhoon_lines.iterrows():
         plt.scatter(typhoon.RMW, typhoon.Vgmax, color="r", marker="x")
     
 plt.show()
-'''
+```
 
 ####2D Field
 
-'''python
+```python
 grid, vector, radial, pressure = typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
                                                 
 #save field to netcdf file
@@ -83,4 +83,4 @@ plt.axis("tight")
 
 anim = animation.FuncAnimation(fig, animate, frames = len(typhoon_lines))
 anim.save('Haiyan.mp4', fps=5, extra_args=['-vcodec', 'libx264'])
-'''
+```
