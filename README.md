@@ -33,6 +33,7 @@ typ.make_grid((lat0, lon0),
 
 typhoon_lines = typ.Holland_Params()            #calculate parameters for calculationg of gradient 
                                                 #winds based on Holland 1981
+                                                #returns a dataframe containing the all typhoon parameters at each time-step
 ```
 
 #### Calculate 1D Profile and compare to known datapoints in JMA
@@ -40,6 +41,7 @@ typhoon_lines = typ.Holland_Params()            #calculate parameters for calcul
 ```python
 rs = np.arange(0.1, 300, 0.1)                   #creates an array of r distances
 typhoon_lines = typ.Holland_Profile(rs)         #calculates gradient wind at r distances away
+                                                #add "Vg" column to dataframe containing gradient wind points
 
 #plot estimated profile with jma data points
 for index, typhoon in typhoon_lines.iterrows():
@@ -60,6 +62,10 @@ plt.show()
 
 ```python
 #Return 2D variables based on Holland Equation
+#grid - latitude and longitude field tuple
+#vector - x, y wind_component field tuple
+#radial - wind speed and wind direction field tuple
+pressure - pressure field
 grid, vector, radial, pressure = typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
                                                 
 #save field to netcdf file
