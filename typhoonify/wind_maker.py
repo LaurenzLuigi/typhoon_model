@@ -33,6 +33,7 @@ class wind_maker():
         self.txt_file = txt_file 
         self.freq = freq 
         self.database = database   
+        self.HP_has_been_called = False
         
         self.read_track()
         
@@ -50,6 +51,8 @@ class wind_maker():
 
         '''
         if self.database.lower() == "jma":
+            self.known_radii = [30, 50]
+            self.minimum_record = 35
             typ = self.jma_decoder()
         else:
             pass
@@ -62,8 +65,11 @@ class wind_maker():
             typ = new_range.merge(typ, on="date", how="left")
             typ.interpolate("linear", axis=0, inplace=True)
             
-        self.typhoon_lines = typ
-        return typ   
+        for radius in self.known_radii:
+            key = "R" + str(radius)
+            typ.loc[(radius * 0.51444 >= typ.Vgmax * 1.02), key] = np.nan
+            
+        self.typhoon = typ
       
     def jma_decoder(self):
         '''
@@ -106,15 +112,14 @@ class wind_maker():
             lat = entry[15:18]
             long = entry[19:23]
             Pc = entry[24:28]
-            Vgmax = entry[33:36]
-            R50 = entry[42:46] if entry[42:46] != '    ' else 0
-            R30 = entry[53:57] if entry[53:57] != '    ' else 0
+            Vgmax = entry[33:36] if not entry[33:36] in ['   ', '000'] else 0
+            R50 = entry[42:46] if not entry[42:46] in ['    ', '0000'] else np.nan
+            R30 = entry[53:57] if not entry[53:57] in ['    ', '0000'] else np.nan
             line.append([date, float(lat)/10, float(long)/10, float(Pc), 
-                         float(Vgmax)*0.51444444, float(R50), float(R30)
+                         float(Vgmax)*0.51444444, float(R30), float(R50)
                          ])
-        
         typhoon = pd.DataFrame(line, columns = ["date", "lat", "long", "Pc", 
-                                                "Vgmax", "R50", "R30"])
+                                                "Vgmax", "R30", "R50"])
         typhoon["date"] = pd.to_datetime(typhoon.date, format="%Y%m%d%H")
         return typhoon
     
@@ -124,7 +129,7 @@ class wind_maker():
         shape parameter B to minize root mean square error in comparison to
         known points based on best track data.
         
-        In the absence of known points, shape parameter was estimated based on 
+        In the absence of known points, shape parameter, and RMW was estimated based on 
         the relationship suggested by Vickery and Madhara (2003)
         
         Using the optimized gradient wind formulation, calculate the Radius of
@@ -132,49 +137,53 @@ class wind_maker():
 
         Returns
         -------
-        self.typhoon_lines : pd.DataFrane
+        self.typhoon : pd.DataFrane
             Typhoon Dataframe with additional columns containing optimized
             parameters
 
         '''
+        self.HP_has_been_called = True
         rho_air = 1.225
         Bs = []
         Vgmaxs = []
         RMWs = []
-        self.typhoon_lines["delp"] = 1013 - self.typhoon_lines["Pc"]
-        self.typhoon_lines.loc[self.typhoon_lines["delp"] < 0] = 0
-        for index, typhoon in self.typhoon_lines.iterrows():
+        self.typhoon["delp"] = 1013 - self.typhoon["Pc"]
+        self.typhoon.loc[self.typhoon["delp"] < 0] = 0
+        for index, typhoon in self.typhoon.iterrows():
             RMW = 8
             lat = typhoon.lat
             Vgmax = typhoon.Vgmax
             
-            if typhoon.R50 != 0 or typhoon.R30 != 0:  
-                if typhoon.R50 != 0:
-                    data = [(typhoon.R50, 50*0.5144444),
-                            (typhoon.R30, 30*0.5144444)]
-                else:
-                    data = [(typhoon.R30, 30*0.5144444)]
-                       
+            data = []
+            for radius in self.known_radii:
+                key = "R" + str(radius)
+                if not np.isnan(typhoon[key]):
+                    data.append((typhoon[key], radius*0.514444))
+                
+            if data:  
                 fun = lambda x: self.error_calc(data, x[0], x[1], typhoon)
-                opt = minimize(fun, (20, Vgmax), method="TNC", 
-                               bounds=((0,100),(Vgmax-2.5*0.5144444, Vgmax+2.5*0.5144444)), tol=1e-8)
+                opt = minimize(fun, (50, Vgmax), method="TNC", 
+                               bounds=((0,100),(Vgmax-2.5*0.5144444, Vgmax+2.5*0.514444)), tol=1e-8)
                 RMW = opt.x[0]
                 Vgmax = opt.x[1]
                 B = Vgmax**2 * np.e * rho_air / typhoon.delp / 100
-            else:
+            elif Vgmax > self.minimum_record * 0.514444:
                 RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delp)**2 + 0.0337 * lat)
-                B = 1.881 - 0.00557*RMW - 0.01295*typhoon.lat
-                Vgmax = (typhoon.delp * 100 * B / np.exp(1)/1.15) ** 0.5                
+                B = Vgmax**2 * np.e * rho_air / typhoon.delp / 100
+            else:             
+                RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delp)**2 + 0.0337 * lat)
+                B = 2 - (typhoon.Pc - 900) / 160
+                Vgmax = (typhoon.delp * 100 * B / np.e / rho_air) ** 0.5 
            
             Vgmaxs.append(Vgmax)
             RMWs.append(RMW)
             Bs.append(B)
             
-        self.typhoon_lines["Vgmax_old"] = self.typhoon_lines["Vgmax"]
-        self.typhoon_lines["Vgmax"] = Vgmaxs
-        self.typhoon_lines["RMW"] = RMWs
-        self.typhoon_lines["B"] = Bs
-        return self.typhoon_lines
+        self.typhoon["Vgmax_old"] = self.typhoon["Vgmax"]
+        self.typhoon["Vgmax"] = Vgmaxs
+        self.typhoon["RMW"] = RMWs
+        self.typhoon["B"] = Bs
+        print(self.typhoon[["Pc", "Vgmax", "Vgmax_old", "B", "RMW"]].head(30))
 
     def Holland_Profile(self, rs):
         '''
@@ -188,20 +197,22 @@ class wind_maker():
 
         Returns
         -------
-        self.typhoon_lines : pd.DataFrane
+        self.typhoon : pd.DataFrane
             Typhoon Dataframe with additional column containing calculated
             gradient winds
 
         '''
+        if self.HP_has_been_called is False:
+            self.Holland_Params()
+        
         Vgs = []
-        for index, typhoon in self.typhoon_lines.iterrows():
+        for index, typhoon in self.typhoon.iterrows():
             Vg = []
             for r in rs:
                 Vg.append(self.wind_function(r, typhoon))
             Vgs.append(Vg)
         
-        self.typhoon_lines["Vgs"] = Vgs
-        return self.typhoon_lines
+        self.typhoon["Vgs"] = Vgs
             
     def Holland_Field(self, geo_cor="Harper", FMA=False, WIA=False, **kwargs):
         '''
@@ -221,25 +232,18 @@ class wind_maker():
 
         Returns
         -------
-        TYPE
-            DESCRIPTION.
-        TYPE
-            DESCRIPTION.
-        tuple
-            DESCRIPTION.
-        tuple
-            DESCRIPTION.
-        TYPE
-            DESCRIPTION.
+        None
 
         '''
-        self.Holland_Params()
+        if self.HP_has_been_called is False:
+            self.Holland_Params()
+            
         wind_x = np.array([])
         wind_y = np.array([])
         wind_pres = np.array([])
         wind_spd = np.array([])
-        wind_dire = np.array([])
-        for index, typhoon in self.typhoon_lines.iterrows():      
+        wind_dir = np.array([])
+        for index, typhoon in self.typhoon.iterrows():      
             lons, lats = self.grid.glat.shape
             R = dist_calc((self.grid.glat, self.grid.glon),
                                   (typhoon.lat, typhoon.long))
@@ -273,23 +277,23 @@ class wind_maker():
             try:
                 wind_pres = np.dstack((wind_pres, self.pres_function(R, typhoon)))
                 wind_spd = np.dstack((wind_spd, wind_speed))
-                wind_dire = np.dstack((wind_dire, wind_direction))
+                wind_dir = np.dstack((wind_dir, wind_direction))
                 wind_x = np.dstack((wind_x, - wind_speed * np.sin(np.radians(wind_direction))))
                 wind_y = np.dstack((wind_y, wind_speed * np.cos(np.radians(wind_direction))))
             except ValueError:
                 wind_spd = np.expand_dims(wind_speed, axis=2)
-                wind_dire = np.expand_dims(wind_direction, axis=2)
+                wind_dir = np.expand_dims(wind_direction, axis=2)
                 wind_pres = np.expand_dims(self.pres_function(R, typhoon),axis=2)
                 wind_x = np.expand_dims(- wind_speed * np.sin(np.radians(wind_direction)),axis=2)
                 wind_y = np.expand_dims(wind_speed * np.cos(np.radians(wind_direction)),axis=2)     
                 
             self.wind_spd = wind_spd
-            self.wind_dire = wind_dire
+            self.wind_dir = wind_dir
             self.wind_pres = wind_pres
             self.wind_x = wind_x
             self.wind_y = wind_y
             
-        return (self.grid.glat, self.grid.glon), (self.wind_x, self.wind_y), (self.wind_spd, self.wind_dire), self.wind_pres,
+        return None
         
     def geo_Harper(self, ws):
         '''
@@ -342,8 +346,8 @@ class wind_maker():
             Corrected 2D Wind Speed array.
 
         '''
-        new = self.typhoon_lines.iloc[index]
-        old = self.typhoon_lines.iloc[index - 1]
+        new = self.typhoon.iloc[index]
+        old = self.typhoon.iloc[index - 1]
         R = dist_calc((new.lat, new.long), (old.lat, old.long))
         delta_t = (new.date - old.date).seconds
         Vfm = R * 1000 / delta_t
@@ -402,14 +406,14 @@ class wind_maker():
         
         long_out = self.grid.glon[:,0].tolist()
         lat_out = self.grid.glat[0,:].tolist()
-        start = self.typhoon_lines.date.iloc[0]
-        time_out = [(i - start).days*24 + (i - start).seconds/3600 for i in self.typhoon_lines.date]
+        start = self.typhoon.date.iloc[0]
+        time_out = [(i - start).days*24 + (i - start).seconds/3600 for i in self.typhoon.date]
         
         ncout = netCDF4.Dataset(fname, "w")
         
         ncout.createDimension("latitude", lats)
         ncout.createDimension("longitude", lons)
-        ncout.createDimension("time", len(self.typhoon_lines))
+        ncout.createDimension("time", len(self.typhoon))
         
         lats = ncout.createVariable("latitude","f",("latitude",))
         lons = ncout.createVariable("longitude","f",("longitude",))
