@@ -66,12 +66,13 @@ for index, entry in typhoon.iterrows():
 from matplotlib import animation
 
 #Return 2D variables based on Holland Equation
-typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
+typ.Holland_Field(FMA = True, WIA=True, GC = "Harper", theta_max=-115, dfm=0.5)
                                             #FMA - Apply Forward Motion Assymetry Correction
                                             #WIA - Apply Wind Inflow Angle Correction
+                                            #GC - Apply Geostropic Correction
 lat = typ.grid.glat
-long = typ.grid.long
-wind_x = typ.wind                           #wind component along x-axis
+long = typ.grid.glon
+wind_x = typ.wind_x                           #wind component along x-axis
 wind_y = typ.wind_y                         #wind component along y-axis
 wind_spd = typ.wind_spd                     #wind speed
 wind_dir = typ.wind_dir                     #wind direction
