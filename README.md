@@ -30,7 +30,7 @@ typ.make_grid((lat0, lon0),
               (lat1, lon1), 
               (dellat, dellon))                 #create grid for calculation of 2D field
 
-typhoon_lines = typ.Holland_Params()            #calculate parameters for calculationg of gradient 
+typ.Holland_Params()                            #calculate parameters for calculationg of gradient 
                                                 #winds based on Holland 1981
 ```
 
@@ -39,22 +39,25 @@ typhoon_lines = typ.Holland_Params()            #calculate parameters for calcul
 ```python
 import matplotlib.pyplot as plt
 
-rs = np.arange(0.1, 300, 0.1)                   #creates an array of r distances
-typhoon_lines = typ.Holland_Profile(rs)         #calculates gradient wind at r distances away
+rs = np.arange(0, 300, 0.5)                   #creates an array of r distances
+typ.Holland_Profile(rs)                         #calculates gradient wind at r distances away
+typhoon = typ.typhoon
 
 #plot estimated profile with jma data points
-for index, typhoon in typhoon_lines.iterrows():
-    if index == 20: #sample
-        plt.plot(rs, typhoon.Vgs, "b")
-        if typhoon.R50 != 0:
-            plt.scatter(typhoon.R50, 50.0*0.514444, color="g", marker="x")
+known_radii = typ.known_radii
+for index, entry in typhoon.iterrows():
+    if index == 0: #sample
+        plt.plot(rs, entry.Vgs, "b")
+        for radius in known_radii:
+            key = "R" + str(radius) 
+            if not np.isnan(entry[key]):
+                plt.scatter(entry[key], radius*0.514444, color="g", marker="x")
             
-        if typhoon.R30 != 0:
-            plt.scatter(typhoon.R30, 30.0*0.514444, color="k", marker="x")
-            
-        plt.scatter(typhoon.RMW, typhoon.Vgmax, color="r", marker="x")
-    
-plt.show()
+        plt.scatter(entry.RMW, entry.Vgmax, color="r", marker="x")
+        plt.grid()
+        plt.xlabel("radius (km)")
+        plt.ylabel("gradient wind speed (m/s)")
+        plt.show()
 ```
 
 #### Calculate wind and pressure fields and save to netcdf
@@ -63,30 +66,39 @@ plt.show()
 from matplotlib import animation
 
 #Return 2D variables based on Holland Equation
-grid, vector, radial, pressure = typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
-                                                
+typ.Holland_Field(FMA = True, WIA=True, theta_max=-115, dfm=0.5)
+                                            #FMA - Apply Forward Motion Assymetry Correction
+                                            #WIA - Apply Wind Inflow Angle Correction
+lat = typ.grid.glat
+long = typ.grid.long
+wind_x = typ.wind                           #wind component along x-axis
+wind_y = typ.wind_y                         #wind component along y-axis
+wind_spd = typ.wind_spd                     #wind speed
+wind_dir = typ.wind_dir                     #wind direction
+wind_pres = typ.wind_pres                   #wind pressure field
+           
 #save field to netcdf file
 typ.nc_save() #fname = "xxxxx.nc"
 
 #create animation of resulting wind_field
 def animate(i):
-    for index, typhoon in typhoon_lines.iterrows():
+    for index, entry in typhoon.iterrows():
         if index == i:
             plt.clf()
-            con = plt.contourf(grid[1], grid[0], radial[0][:, :, index], cmap="rainbow", vmin=0, vmax=40)
+            con = plt.contourf(long, lat, wind_spd[:, :, index], cmap="rainbow", vmin=0, vmax=40)
             m = plt.cm.ScalarMappable(cmap=plt.cm.rainbow)
-            m.set_array(radial[0][:, :, index])
+            m.set_array(wind_spd[:, :, index])
             m.set_clim(0, 40)
             plt.colorbar(m, boundaries=np.linspace(0, 40, 5))
             n = 15
-            plt.quiver(grid[1][0:-1:n, 0:-1:n], grid[0][0:-1:n, 0:-1:n], 
-                        vector[0][0:-1:n, 0:-1:n, index], vector[1][0:-1:n, 0:-1:n, index])
+            plt.quiver(long[0:-1:n, 0:-1:n], lat[0:-1:n, 0:-1:n], 
+                        wind_x[0:-1:n, 0:-1:n, index], wind_y[0:-1:n, 0:-1:n, index])
     return con
 
 fig = plt.figure(figsize=(12, 4))
 ax = plt.axes(xlim=(120, 125), ylim=(9, 13))
 plt.axis("tight")
 
-anim = animation.FuncAnimation(fig, animate, frames = len(typhoon_lines))
+anim = animation.FuncAnimation(fig, animate, frames = len(typhoon))
 anim.save('Haiyan.mp4', fps=5, extra_args=['-vcodec', 'libx264'])
 ```
