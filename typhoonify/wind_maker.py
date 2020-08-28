@@ -34,6 +34,7 @@ class wind_maker():
         self.freq = freq 
         self.database = database   
         self.HP_has_been_called = False
+        self.rho_air = 1.225
         
         self.read_track()
         
@@ -54,8 +55,10 @@ class wind_maker():
             self.known_radii = [30, 50]
             self.minimum_record = 35
             typ = self.jma_decoder()
-        else:
-            pass
+        if self.database.lower() == "jtwc":
+            self.known_radii = [34, 50, 64, 100]
+            self.minimum_record = 15
+            typ = self.jtwc_decoder()
             
         if self.freq is not False:
             start = typ.date.iloc[0]
@@ -67,8 +70,8 @@ class wind_maker():
             
         for radius in self.known_radii:
             key = "R" + str(radius)
-            typ.loc[(radius * 0.51444 >= typ.Vgmax * 1.02), key] = np.nan
-            
+            typ.loc[(radius * 0.51444 >= typ.Vgmax * 0.98), key] = np.nan
+        
         self.typhoon = typ
       
     def jma_decoder(self):
@@ -123,6 +126,43 @@ class wind_maker():
         typhoon["date"] = pd.to_datetime(typhoon.date, format="%Y%m%d%H")
         return typhoon
     
+    def jtwc_decoder(self):
+        '''
+        Decode jma data_set to useable format
+
+        Returns
+        -------
+        typhoon : pd.DataFrane
+            Dataframe containing typhoon details.
+
+        '''
+        cols = ["BASIN" , "CY" , "date" , "TECHNUM" , "TECH" , "TAU" , "lat" , "long" , "Vgmax" , "Pc" ,
+                "TY" , "R" , "WINDCODE" , "R1" , "R2" , "R3" , "R4" , "RADP" , "RRP" , "MRD" , "GUSTS" , "EYE" ,
+                "SUBREGION" , "MAXSEAS" , "INITIALS" , "DIR" , "SPEED" , "STORMNAME" , "DEPTH" , "SEAS" ,
+                "SEASCODE" , "SEAS1" , "SEAS2" , "SEAS3" , "SEAS4"
+                ]
+        
+        self.txt_file = self.txt_file + "\\bwp" + str(self.incode) + ".dat"
+        typhoon_raw = pd.read_csv(self.txt_file, names=cols)
+        
+        radii = typhoon_raw[["R1", "R2", "R3", "R4"]]
+        radii["Re"] = radii.min(axis=1)
+        radii["R"] = typhoon_raw[["R"]]
+        typhoon = typhoon_raw[["date"]]
+        typhoon["R"] = typhoon_raw[["MRD"]]
+        
+        typhoon["date"] = pd.to_datetime(typhoon_raw.date, format="%Y%m%d%H")
+        typhoon["lat"] = [float(i[:-1])/10 for i in typhoon_raw["lat"]]
+        typhoon["long"] = [float(i[:-1])/10 for i in typhoon_raw["long"]]
+        typhoon["Pc"] = typhoon_raw["Pc"].astype('float32')
+        typhoon["Vgmax"] = typhoon_raw["Vgmax"].astype('float32') * 0.514444
+ 
+        for radius in self.known_radii:  
+            key = "R" + str(radius)
+            typhoon[key] = radii.loc[(radii.R == radius), "Re"]
+
+        return typhoon
+    
     def Holland_Params(self):
         '''
         Optimize gradient wind formulation by Holland (1981) by adjusting 
@@ -141,12 +181,11 @@ class wind_maker():
 
         '''
         if self.HP_has_been_called is False:
-            rho_air = 1.225
             Bs = []
             Vgmaxs = []
             RMWs = []
             self.typhoon["delp"] = 1013 - self.typhoon["Pc"]
-            self.typhoon.loc[self.typhoon["delp"] < 0] = 0
+            self.typhoon.loc[self.typhoon["delp"] < 0] = 0.001
             for index, typhoon in self.typhoon.iterrows():
                 RMW = 8
                 lat = typhoon.lat
@@ -156,22 +195,26 @@ class wind_maker():
                 for radius in self.known_radii:
                     key = "R" + str(radius)
                     if not np.isnan(typhoon[key]):
-                        data.append((typhoon[key], radius*0.514444))
+                        data.append((typhoon[key] * 1.852, radius*0.514444))
                     
-                if data:  
-                    fun = lambda x: self.error_calc(data, x[0], x[1], typhoon)
-                    opt = minimize(fun, (50, Vgmax), method="TNC", 
-                                   bounds=((0,100),(Vgmax-2.5*0.5144444, Vgmax+2.5*0.514444)), tol=1e-8)
+                if data:
+                    fun = lambda x: self.error_calc(data, x[0], Vgmax, typhoon)
+                    # opt = minimize(fun, (5, Vgmax), method="TNC", 
+                    #                bounds=((0,200),(Vgmax-2.5*0.5144444, Vgmax+2.5*0.514444)), tol=1e-8)
+                    opt = minimize(fun, 200, method="Powell", bounds=((1, 200),),
+                                   tol=1e-8)
                     RMW = opt.x[0]
-                    Vgmax = opt.x[1]
-                    B = Vgmax**2 * np.e * rho_air / typhoon.delp / 100
+                    Vgmax = Vgmax
+                    B = (Vgmax)**2 * np.e * self.rho_air / typhoon.delp / 100
+                    c = typhoon.R30 / 2*Vgmax * np.log(30 / Vgmax + 1)
+                    
                 elif Vgmax > self.minimum_record * 0.514444:
                     RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delp)**2 + 0.0337 * lat)
-                    B = Vgmax**2 * np.e * rho_air / typhoon.delp / 100
+                    B = Vgmax**2 * np.e * self.rho_air / typhoon.delp / 100
                 else:             
                     RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delp)**2 + 0.0337 * lat)
                     B = 2 - (typhoon.Pc - 900) / 160
-                    Vgmax = (typhoon.delp * 100 * B / np.e / rho_air) ** 0.5 
+                    Vgmax = (typhoon.delp * 100 * B / np.e / self.rho_air) ** 0.5 
                
                 Vgmaxs.append(Vgmax)
                 RMWs.append(RMW)
@@ -211,7 +254,7 @@ class wind_maker():
         
         return None
             
-    def Holland_Field(self, GC=False, FMA=False, WIA=False, **kwargs):
+    def Holland_Field(self, GC=False, FMA=False, WIA=False, north=True, **kwargs):
         '''
         Calculates 2D wind and pressure field based on the formulation by 
         Holland (1981)
@@ -239,6 +282,7 @@ class wind_maker():
         wind_pres = np.array([])
         wind_spd = np.array([])
         wind_dir = np.array([])
+                            
         for index, entry in self.typhoon.iterrows():      
             lons, lats = self.grid.glat.shape
             R = dist_calc((self.grid.glat, self.grid.glon),
@@ -246,7 +290,7 @@ class wind_maker():
             wind_speed = self.wind_function(R, entry)
             wind_direction = wind_dir_function((self.grid.glat, self.grid.glon), 
                                           (entry.lat, entry.long), 
-                                          northern=True)
+                                          northern=north)
 
             if GC == "Harper":
                 wind_speed, _ = self.geo_Harper(wind_speed)
@@ -264,11 +308,7 @@ class wind_maker():
                     wind_speed = self.FMA_Harper(wind_speed, wind_direction, entry, theta_max, dfm, index)
                     
             if WIA is True:
-                try:
-                    north = kwargs.get('north')
-                    wind_direction = self.WIA_Sobey(wind_direction, entry.RMW, north)
-                except:
-                    wind_direction = self.WIA_Sobey(wind_direction, entry.RMW, R, True)
+                    wind_direction = self.WIA_Sobey(wind_direction, entry.RMW, R, north)
             
             try:
                 wind_pres = np.dstack((wind_pres, self.pres_function(R, entry)))
@@ -442,30 +482,29 @@ class wind_maker():
         error = 0
         for datum in data:
             error += (datum[1] - self.wind_optimize(RMW, datum[0], Vgmax, typhoon))**2
+        error = (error / len(data)) ** 0.5
         return error
     
     def wind_optimize(self, RMW, r, Vgmax, typhoon):
-        rho_air = 1.225
         f = 2 * 7.2921e-5 * np.sin(np.radians(typhoon.lat))
         if Vgmax != 0:
-            B = Vgmax**2 * np.e * rho_air / typhoon.delp / 100
+            B = Vgmax**2 * np.e * self.rho_air / typhoon.delp / 100
         else:
             B = 1.881 - 0.00557*RMW - 0.01295*typhoon.lat
             Vgmax = (typhoon.delp * 100 * B / np.exp(1)/1.15) ** 0.5
         
         p1 = (RMW / r) ** B
-        p2 = B * typhoon.delp * np.exp(-p1) / rho_air * 100
+        p2 = B * typhoon.delp * np.exp(-p1) / self.rho_air * 100
         p3 = r**2 * f**2 / 4
         p4 = - f * r / 2
         
         return (p1*p2 + p3)**0.5 - p4    
     
     def wind_function(self, R, typhoon):
-        rho_air = 1.225
         f = 2 * 7.2921e-5 * np.sin(np.radians(typhoon.lat))
         
         p1 = (typhoon.RMW / R) ** typhoon.B
-        p2 = typhoon.B * typhoon.delp * np.exp(-p1) / rho_air * 100.0
+        p2 = typhoon.B * typhoon.delp * np.exp(-p1) / self.rho_air * 100.0
         p3 = R**2 * f**2 / 4
         p4 = - f * R / 2
         
@@ -500,11 +539,10 @@ def wind_dir_function(COORDS1, coords0, northern=True):
     X = cos(lat1) * sin(dlon)
     Y = cos(lat0) * sin(lat1) - cos(lat1) * sin(lat0) * cos(dlon) 
     bearing = degrees(arctan2(Y, X))
-    # if northern is True:
-    #     wind_direction = (bearing + 90) % 360
-    # else:
-    #     wind_direction = (bearing - 90) % 360
-    wind_direction = bearing
+    if northern is True:
+        wind_direction = bearing
+    else:
+        wind_direction = bearing - 180
     return wind_direction
 
 def dist_calc(COORDS1, coords0):
