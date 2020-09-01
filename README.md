@@ -1,4 +1,4 @@
-# Typhoonify
+# Typhoon Model
 
 ### Description
 Processing tools for generating wind field from best track data
