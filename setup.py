@@ -11,5 +11,5 @@ setup(
       version="0.1",
       description="various utils for generating typhoon wind field",
       packages=["typhoon_model"],
-      install_requires=["scipy, numpy, netcdf4"]
+      install_requires=["scipy, numpy, netcdf4, pandas"]
       )
