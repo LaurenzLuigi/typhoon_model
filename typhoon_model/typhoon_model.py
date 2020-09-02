@@ -224,7 +224,7 @@ class Processing():
             self.typhoon = self.typhoon.dropna(subset=["Vgmax"])
             return self.typhoon
         if method == "Atk&Hol77":
-            self.typhoon.loc[np.isnan(self.typhoon['Vgmax']), 'Vgmax'] = 6.70 * (self.typhoon.loc[np.isnan(self.typhoon['Vgmax']), 'delP']) ** 0.644
+            self.typhoon.loc[np.isnan(self.typhoon['Vgmax']), 'Vgmax'] = 6.7 * (self.typhoon.loc[np.isnan(self.typhoon['Vgmax']), 'delP']) ** 0.644
             return self.typhoon    
             
     def make_grid(self, ldown, uright, delta):
@@ -370,8 +370,15 @@ class HolSingVor():
                 lat = typhoon.lat
                 Vgmax = typhoon.Vgmax
                 if np.isnan(typhoon.RMW):
-                    RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
-                    B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
+                    if submethod == "Vic&Wad08":
+                        RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                        B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * typhoon.Vgmax) + 0.0169 * lat
+                        B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
+                        B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
                 else:
                     RMW = typhoon.RMW
                     B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
@@ -402,6 +409,12 @@ class HolSingVor():
                 else:
                     if submethod == "Vic&Wad08":
                         RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                        B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * typhoon.Vgmax) + 0.0169 * lat
+                        B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
                         B = Vgmax**2 * np.e * self.rho_air / typhoon.delP / 100
                
                 RMWs.append(RMW)
@@ -544,6 +557,10 @@ class YoungSobey():
                 if np.isnan(typhoon.RMW):
                     if submethod == "Vic&Wad08":
                         RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * typhoon.Vgmax) + 0.0169 * lat
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
                 else:
                     RMW = typhoon.RMW
                     
@@ -571,6 +588,10 @@ class YoungSobey():
                 else:
                     if submethod == "Vic&Wad08":
                         RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * typhoon.Vgmax) + 0.0169 * lat
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
                
                 RMWs.append(RMW)
              
@@ -669,6 +690,175 @@ class YoungSobey():
     
     def pres_function(self, R, typhoon):
         return typhoon.Pc + typhoon.delP * (np.exp(-typhoon.RMW / R))
+    
+class Rankine():
+    def __init__(self, tm):
+        self.tm = tm
+        self.typhoon = tm.typhoon
+        self.rho_air = self.tm.rho_air
+        
+    def optimize(self, submethod="Vic&Wad08"):
+        '''
+        Optimize gradient wind formulation by Holland (1981) by adjusting 
+        shape RMW to minize root mean square error in comparison to
+        known points based on best track data.
+        
+        In the absence of known points, shape parameter, and RMW was estimated based on 
+        the relationship suggested by Vickery and Madhara (2003)
+        
+        Using the optimized gradient wind formulation, calculate the Radius of
+        Maximum Winds (RMW)
+
+        Returns
+        -------
+        None
+
+        '''
+        RMWs = []
+        Xs = []
+        if "RMW" in self.typhoon.columns:
+            for index, typhoon in self.typhoon.iterrows():
+                lat = typhoon.lat
+                if np.isnan(typhoon.RMW):
+                    if submethod == "Vic&Wad08":
+                        RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * typhoon.Vgmax) + 0.0169 * lat
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
+                else:
+                    RMW = typhoon.RMW
+                    
+                RMWs.append(RMW)
+        else:
+            errors = []
+            for index, typhoon in self.typhoon.iterrows():
+                RMW = 8
+                X = 0.5
+                lat = typhoon.lat
+                Vgmax = typhoon.Vgmax
+                data = []
+                for radius in self.tm.known_radii:
+                    key = f"R{radius:.3f}"
+                    if not np.isnan(typhoon[key]):
+                        data.append((typhoon[key], radius))
+                    
+                if data:
+                    RMW_max = min([i[0] for i in data])
+                    fun = lambda x: self.error_calc(data, x[0], x[1], Vgmax, typhoon)
+                    opt = minimize(fun, (RMW, X), method="Powell", 
+                                   bounds=((5, min(200,RMW_max)),(0.4,0.6),),
+                                   tol=1e-8)
+                    RMW = opt.x[0]
+                    X = opt.x[1]
+                    errors.append(self.error_calc(data, RMW, X, Vgmax, typhoon))
+                else:
+                    if submethod == "Vic&Wad08":
+                        RMW = np.exp(3.015 - 6.291*10e-5 * (typhoon.delP)**2 + 0.0337 * lat)
+                    if submethod == "Will07":
+                        RMW = 46.6 * np.exp(-0.0155 * Vgmax) + 0.0169 * lat
+                    if submethod == "SGP02":
+                        RMW = 0.4785 * typhoon.Pc - 413
+                Xs.append(X)
+                RMWs.append(RMW)
+             
+            # key =  f"R{self.tm.known_radii[0]:.3f}"   
+            # self.typhoon.loc[np.invert(np.isnan(self.typhoon[key])),"errors"] = errors
+        self.typhoon["RMW"] = RMWs
+        self.typhoon["X"] = Xs
+        
+        return self.typhoon
+
+    def profiler(self, rs):
+        '''
+        Calculates the gradient wind speed based on the formulation by Holland
+        (1981), on the radiuses specified by the input list
+
+        Parameters
+        ----------
+        rs : list
+            List of radius where gradient wind should be calculated.
+
+        Returns
+        -------
+        None
+
+        '''
+        Vgs = []
+        for index, typhoon in self.typhoon.iterrows():
+            Vg = []
+            for r in rs:
+                Vg.append(self.wind_function(r, typhoon))
+            Vgs.append(Vg)
+        
+        self.typhoon["Vgs"] = Vgs
+        
+        return self.typhoon
+    
+    def field_maker(self, grid, north=True):
+        self.grid = grid
+        self.north = north
+        self.tm.north = self.north
+        wind_pres = np.array([])
+        wind_spd = np.array([])
+        wind_dir = np.array([])
+                            
+        for index, entry in self.typhoon.iterrows():      
+            lons, lats = self.grid.glat.shape
+            R = dist_calc((self.grid.glat, self.grid.glon),
+                                  (entry.lat, entry.long))
+            wind_speed = self.wind_function(R, entry)
+            wind_direction = wind_dir_function((self.grid.glat, self.grid.glon), 
+                                          (entry.lat, entry.long), 
+                                          northern=self.north)
+            try:
+                wind_pres = np.dstack((wind_pres, self.pres_function(R, entry)))
+                wind_spd = np.dstack((wind_spd, wind_speed))
+                wind_dir = np.dstack((wind_dir, wind_direction))
+            except ValueError:
+                wind_spd = np.expand_dims(wind_speed, axis=2)
+                wind_dir = np.expand_dims(wind_direction, axis=2)
+                wind_pres = np.expand_dims(self.pres_function(R, entry),axis=2)    
+                
+        self.wind_spd = wind_spd
+        self.wind_dir = wind_dir
+        self.wind_pres = wind_pres
+        self.tm.wind_spd = self.wind_spd 
+        self.tm.wind_dir = self.wind_dir 
+        self.tm.wind_pres = self.wind_pres   
+        
+        return None
+        
+    def error_calc(self, data, RMW, X, Vgmax, typhoon):
+        error = 0
+        for datum in data:
+            error += (datum[1] - self.wind_optimize(RMW, datum[0], X, Vgmax))**2
+        error = (error / len(data)) ** 0.5
+        return error
+    
+    def wind_optimize(self, RMW, r, X, Vgmax):
+        if r < RMW:
+            wind = Vgmax * (r/RMW)
+        else:
+            wind = Vgmax * (RMW/r) ** X
+        
+        return wind
+    
+    def wind_function(self, R, typhoon):
+        wind = np.copy(R)
+        wind = wind.astype(np.float32)
+        
+        mask = R < typhoon.RMW
+        wind[mask] = typhoon.Vgmax * (R[mask]/typhoon.RMW)
+        mask = R >= typhoon.RMW
+        wind[mask] = typhoon.Vgmax * (typhoon.RMW/R[mask]) ** typhoon.X
+        wind = np.nan_to_num(wind)
+        
+        return wind
+    
+    def pres_function(self, R, typhoon):
+        return typhoon.Pc + typhoon.delP * (np.exp(-typhoon.RMW / R))
+    
     
 def wind_dir_function(COORDS1, coords0, northern=True):
     from numpy import cos, sin, radians, degrees, arctan2
