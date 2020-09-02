@@ -25,7 +25,7 @@ typhoon = tm.calc_vgmax(method="constant",
 typhoon = tm.resolve_vnan(method="Atk&Hol77")
 
 hol = typhoon_model.HolSingVor(tm)
-typhoon = hol.optimize(submethod = "Vic&Wad08")         #apply submethod if no data points present
+typhoon = hol.optimize(submethod="SGP02")         #apply submethod if no data points present
 ```
 
 #### Calculate 1D Profile and compare to known datapoints in JMA
@@ -83,7 +83,6 @@ wind_pres = hol.wind_pres                   #wind pressure field
 #save field to netcdf file
 hol.nc_save() #fname = "xxxxx.nc"
 ```
-
 
 #### Create animation of resulting wind_field
 
