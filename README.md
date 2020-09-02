@@ -82,8 +82,12 @@ wind_pres = hol.wind_pres                   #wind pressure field
            
 #save field to netcdf file
 hol.nc_save() #fname = "xxxxx.nc"
+```
 
-#create animation of resulting wind_field
+
+#### Create animation of resulting wind_field
+
+```python
 from matplotlib import animation
 
 def animate(i):
