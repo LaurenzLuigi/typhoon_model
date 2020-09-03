@@ -8,7 +8,7 @@ from setuptools import setup
 
 setup(
       name="typhoon_model",
-      version="0.1",
+      version="0.3",
       description="various utils for generating typhoon wind field",
       packages=["typhoon_model"],
       install_requires=["scipy, numpy, netcdf4, pandas"]
