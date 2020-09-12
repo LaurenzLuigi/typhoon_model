@@ -3,6 +3,186 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 
+class Critical_Typhoon():
+    def __init__(self, proj_lat, proj_lon, radius=200):
+        self.proj_lat = proj_lat
+        self.proj_lon = proj_lon
+        self.radius = radius
+        self.amb_pres = 1010
+        
+    def read_database(self, txt_file, year_start, year_end, outfreq="6H", database="jma"):
+        '''
+        Read tracks from file and extract typhoon based on self.incode
+        Parameters
+        ----------
+        txt_file : file_path
+            Text file containing best track data downloadable from JMA
+            or JTWC website
+        incode : int
+            Typhoon code based on best track data.
+        inname : str, optional
+            Typhoon name. The default is False.
+        freq : offset alias, optional
+            Time-step of output files. Missing data will be linearly 
+            interpolated. The default is "6H".
+        database : TYPE, optional
+            Select between "jma" or "jtwc". The default is "jma".
+        
+        Returns
+        -------
+        typ : pd.DataFrame
+            Typhoon data frame with inserted interpolated data
+
+        '''
+        self.txt_file = txt_file
+        self.outfreq = outfreq
+        self.year_start = year_start
+        self.year_end = year_end
+        
+        if database.lower() == "jma":
+            self.known_radii = np.asarray([30, 50]) * 0.514444
+            self.minimum_record = 35
+            self.jma_decoder()
+        if database.lower() == "jtwc":
+            self.known_radii = np.asarray([34, 50, 64, 100]) * 0.514444
+            self.minimum_record = 15
+            self.jtwc_decoder()
+            
+        for key, typ in self.typhoon_dict.items():
+            start = typ.date.iloc[0]
+            end = typ.date.iloc[-1]
+            new_range = pd.date_range(start, end, freq=outfreq)
+            new_range = pd.DataFrame({"date": new_range})
+            typhoon = new_range.merge(typ, on="date", how="left")
+            typhoon.interpolate("linear", axis=0, limit_area="inside", inplace=True)
+                
+            self.typhoon_dict[key] = typhoon
+            
+        keys = []
+        for key, typ in self.typhoon_dict.items():
+            dist = []
+            coords0 = (self.proj_lat, self.proj_lon)
+            for index, entry in typ.iterrows():
+                coords1 = (entry.lat, entry.lon)
+                dist.append(dist_calc(coords0, coords1))
+                
+            typ["distance"] = dist
+            typ["year"] = pd.DatetimeIndex(typ.date).year
+            typ["name"] = key[5:]
+            typ["code"] = key[0:4]
+            if typ.distance.min() > self.radius:
+                keys.append(key)
+        
+        for key in keys:        
+            del self.typhoon_dict[key]
+      
+        self.conv_10min_to_1min()
+        self.calc_vgmax(constant=0.8)
+        self.resolve_vnan()
+              
+        self.calc_vsite()
+        
+        return self.typhoon_dict
+      
+    def jma_decoder(self):
+        '''
+        Decode jma data_set to useable format
+
+        Returns
+        -------
+        typhoon : pd.DataFrane
+            Dataframe containing typhoon details.
+
+        '''
+        with open(self.txt_file) as f:
+            lines = f.readlines()
+        
+        code_name = []
+        self.typhoon_dict = {}
+        for line in lines:
+            if int(line[0:5]) == 66666:
+                code = line[6:10]
+                name = line[30:50]
+                code_name.append((code, name.strip().capitalize()))
+                key = code + " " + name.strip().capitalize()
+            else:
+                self.typhoon_dict.setdefault(key, []).append(line[:-1])
+                
+        for code, name in code_name:
+            key = code + " " + name
+            year = code[0:2]
+            if int(year) > 50:
+                year = "19" + year
+            else:
+                year = "20" + year
+                
+            if not (self.year_start <= int(year) <= self.year_end):
+                del self.typhoon_dict[key]     
+                
+        for key, typ in self.typhoon_dict.items():    
+            line = []
+            for entry in typ:
+                #date, lat, lon, Pc, Vgmax, R50, dir50, R30
+                if int(entry[0:2]) > 50:
+                    date = "19" + entry[0:8]
+                else:
+                    date = "20" + entry[0:8]
+                lat = entry[15:18]
+                lon = entry[19:23]
+                Pc = entry[24:28]
+                Vmax = entry[33:36] if not entry[33:36] in ['   ', '000'] else np.nan
+                line.append([date, float(lat)/10, float(lon)/10, float(Pc), 
+                             float(Vmax)*0.514444
+                             ])
+            column_names = ["date", "lat", "lon", "Pc", "Vmax"]
+            
+            typhoon = pd.DataFrame(line, columns = column_names)
+            typhoon["date"] = pd.to_datetime(typhoon.date, format="%Y%m%d%H")
+            delP = self.amb_pres - typhoon.Pc
+            typhoon["delP"] = [i if i > 1 else 1 for i in delP]   
+            
+            self.typhoon_dict[key] = typhoon
+            
+    def conv_10min_to_1min(self, constant=1.08):
+        for key, typ in self.typhoon_dict.items():  
+            typ["Vmax"] = typ["Vmax"] * constant
+            self.typhoon_dict[key] = typ
+            
+        return self.typhoon_dict.items()
+    
+    def calc_vgmax(self, method="constant", **kwargs):
+        for key, typ in self.typhoon_dict.items(): 
+            if method == "constant":
+                constant = kwargs.get("constant")
+                typ["Vgmax"] = typ["Vmax"] / constant
+                self.typhoon_dict[key] = typ
+
+        return self.typhoon_dict.items()
+          
+    def resolve_vnan(self, method="Atk&Hol77", **kwargs):
+        if method == "remove":
+            for key, typ in self.typhoon_dict.items(): 
+                typ = typ.dropna(subset=["Vgmax"])
+                self.typhoon_dict[key] = typ
+            return self.typhoon_dict.items()
+        
+        if method == "Atk&Hol77":
+            for key, typ in self.typhoon_dict.items(): 
+                typ.loc[np.isnan(typ['Vgmax']), 'Vgmax'] = 6.7 * (typ.loc[np.isnan(typ['Vgmax']), 'delP']) ** 0.644
+                self.typhoon_dict[key] = typ
+            return self.typhoon_dict.items()   
+           
+    def calc_vsite(self):
+        for key, typ in self.typhoon_dict.items(): 
+            vsite = []
+            for index, entry in typ.iterrows():    
+                RMW = 0.4785 * entry.Pc - 413
+                if entry.distance < RMW:
+                    vsite.append(entry.Vgmax * (entry.distance/RMW)**7.0 * np.exp(7.0*(1.0-entry.distance/RMW)))
+                else:
+                    vsite.append(entry.Vgmax * np.exp((0.0025*RMW + 0.05)*(1.0-entry.distance/RMW)))  
+            typ["v_site"] = [0.8*v for v in vsite]
+        
 class Processing():
     def __init__(self):
         '''
